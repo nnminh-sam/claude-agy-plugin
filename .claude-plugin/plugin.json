@@ -6,6 +6,8 @@
     "name": "Nguyễn Nhật Minh",
     "email": "nnminh.sam.1803@gmail.com"
   },
+  "homepage": "https://github.com/nnminh-sam/claude-agy-plugin",
+  "repository": "https://github.com/nnminh-sam/claude-agy-plugin",
   "license": "MIT",
   "keywords": [
     "antigravity",

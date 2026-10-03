@@ -27,11 +27,13 @@ A Claude Code plugin for delegating work to [Google Antigravity](https://antigra
 
 ```bash
 # inside Claude Code
-/plugin marketplace add /Users/nnminh/workspaces/claude-agy/claude-agy-plugin
+/plugin marketplace add nnminh-sam/claude-agy-plugin
 /plugin install agy@agy-plugins
 ```
 
-For a one-off session, run `claude --plugin-dir /Users/nnminh/workspaces/claude-agy/claude-agy-plugin`.
+To pick up a new release later, run `/plugin marketplace update agy-plugins`.
+
+For a one-off session from a local clone, run `claude --plugin-dir /path/to/claude-agy-plugin`.
 
 ## The `claude-agy` CLI
 

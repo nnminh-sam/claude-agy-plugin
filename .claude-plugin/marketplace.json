@@ -1,0 +1,17 @@
+{
+  "name": "agy-plugins",
+  "owner": {
+    "name": "Nguyễn Nhật Minh",
+    "email": "nnminh.sam.1803@gmail.com"
+  },
+  "metadata": {
+    "description": "Claude-AGY: plugins that connect Claude Code to Google Antigravity agents."
+  },
+  "plugins": [
+    {
+      "name": "agy",
+      "source": "./",
+      "description": "Delegate tasks from Claude Code to Google Antigravity (agy) agents."
+    }
+  ]
+}

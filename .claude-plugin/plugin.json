@@ -1,0 +1,18 @@
+{
+  "name": "agy",
+  "version": "0.1.0",
+  "description": "Delegate tasks from Claude Code to Google Antigravity (agy) agents: slash commands, a delegation subagent, and a skill, with every run tracked for the Claude-AGY orchestrator dashboard.",
+  "author": {
+    "name": "Nguyễn Nhật Minh",
+    "email": "nnminh.sam.1803@gmail.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "antigravity",
+    "agy",
+    "gemini",
+    "delegation",
+    "subagents",
+    "orchestration"
+  ]
+}

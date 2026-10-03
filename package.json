@@ -1,0 +1,11 @@
+{
+  "name": "claude-agy-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claude Code plugin for delegating tasks to Antigravity agents",
+  "type": "module",
+  "bin": { "claude-agy": "bin/claude-agy" },
+  "engines": { "node": ">=22.5" },
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "license": "MIT"
+}

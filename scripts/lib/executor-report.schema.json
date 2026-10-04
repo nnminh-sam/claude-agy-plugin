@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "claude-agy executor report",
+  "description": "The final report an Antigravity agent returns to Claude Code through claude-agy. agy enforces it with --json-schema and returns it as the result's structured_output.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "summary", "details", "changes", "verification", "assumptions", "remaining", "blockers"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["done", "blocked", "failed"],
+      "description": "done: the task is complete. blocked: something outside your control stopped you; list it in blockers. failed: you tried, but could not complete the task."
+    },
+    "summary": { "type": "string", "description": "One to three sentences: what you did and how it ended." },
+    "details": { "type": "string", "description": "Findings, answers or a plan the task asked for. Empty if there are none." },
+    "changes": {
+      "type": "array",
+      "description": "Every file you created, edited or deleted.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "change"],
+        "properties": {
+          "path": { "type": "string", "description": "Path relative to the workspace." },
+          "change": { "type": "string", "description": "What changed, in a few words." }
+        }
+      }
+    },
+    "verification": {
+      "type": "array",
+      "description": "Every check you ran, such as tests, a build or a linter, and its result.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "passed", "output"],
+        "properties": {
+          "command": { "type": "string" },
+          "passed": { "type": "boolean" },
+          "output": { "type": "string", "description": "The lines of output that show the result, such as the test summary." }
+        }
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Assumptions you made where the task was silent."
+    },
+    "remaining": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Work the task asked for that is not done."
+    },
+    "blockers": {
+      "type": "array",
+      "description": "What stopped you. At least one entry when status is blocked or failed.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "detail", "target", "needs"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["permission", "missing_tool", "needs_input", "out_of_scope", "environment", "task_failed"],
+            "description": "permission: an action was denied or needs approval. missing_tool: a command, program, package, service or tool is not available. needs_input: the task is ambiguous or contradictory, or lacks a file, credential or decision. out_of_scope: finishing needs changes the task rules out. environment: the network, sandbox, disk or a service is broken. task_failed: you tried, but cannot meet the acceptance criteria."
+          },
+          "detail": { "type": "string", "description": "What happened, with the exact error message if there was one." },
+          "target": { "type": "string", "description": "The command, file, tool, package or URL involved. Empty if none." },
+          "needs": { "type": "string", "description": "What would unblock you." }
+        }
+      }
+    }
+  }
+}

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import readline from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { formatTokens, getCredits, getModels, getQuota, summarizeEvent } from './lib/agy.mjs';
+import { resumeCommand } from './lib/outcome.mjs';
 import { PROFILE_PATH, resolveModel, writeProfile } from './lib/profile.mjs';
 import { supervise } from './lib/runner.mjs';
 import {
@@ -31,6 +32,11 @@ Usage:
 
 <run> is a run id, a unique prefix/suffix of one, or "last". Add --json for machine output.
 
+The agent works as an executor and ends with a JSON report. Each run records its status
+(succeeded, blocked, failed or cancelled), the report, and the blockers that stopped it, each
+with suggested next steps; --json output adds the command that resumes the run.
+Exit codes of run and wait: 0 succeeded, 1 failed, 3 blocked, 124 still running (wait), 130 cancelled.
+
 run options:
   -m, --model ID        agy model (default: $CLAUDE_AGY_MODEL, then "defaultModel" in profile.json)
       --plan            Plan mode: the agent proposes changes instead of editing (default: accept-edits)
@@ -44,7 +50,7 @@ run options:
       --yolo            Pass --dangerously-skip-permissions (or set CLAUDE_AGY_SKIP_PERMISSIONS=1)
       --label TEXT      Short name shown in listings and the dashboard
   -b, --background      Detach and print the run id immediately
-      --no-preamble     Send the task verbatim (no headless-delegation preamble)
+      --no-preamble     Send the task verbatim (no executor preamble, no JSON report)
   -v, --verbose         Stream event summaries to stderr while running
 
 State: ${HOME}   Profile: ${PROFILE_PATH}`;
@@ -85,7 +91,10 @@ const oneLine = (s, n) => {
   const flat = String(s ?? '').replace(/\s+/g, ' ').trim();
   return flat.length > n ? `${flat.slice(0, n - 1)}…` : flat;
 };
-const exitCodeFor = (status) => ({ succeeded: 0, cancelled: 130 })[status] ?? 1;
+const exitCodeFor = (status) => ({ succeeded: 0, blocked: 3, cancelled: 130 })[status] ?? 1;
+const resumeFor = (meta) => (ACTIVE.has(meta.status) ? null : resumeCommand(meta));
+// What run --json and wait --json print: meta.json, the agent's full response and the resume command.
+const withOutcome = (meta) => ({ ...meta, response: readResult(meta.id)?.response ?? null, resumeCommand: resumeFor(meta) });
 
 function printRun(meta, { events = 0 } = {}) {
   const result = readResult(meta.id);
@@ -97,14 +106,42 @@ function printRun(meta, { events = 0 } = {}) {
   console.log(`run ${meta.id}: ${bits.join(' · ')}`);
   if (meta.label) console.log(`label: ${meta.label}`);
   console.log(`cwd: ${meta.cwd}`);
-  if (meta.conversationId) console.log(`conversation: ${meta.conversationId}  (continue with: claude-agy run --resume ${meta.conversationId} ...)`);
+  if (meta.conversationId) console.log(`conversation: ${meta.conversationId}`);
   if (meta.error) console.log(`error: ${typeof meta.error === 'string' ? meta.error : JSON.stringify(meta.error)}`);
   if (events > 0) {
     const lines = readEvents(meta.id).slice(-events);
     if (lines.length) console.log(`\n--- last ${lines.length} events ---\n${lines.map(summarizeEvent).join('\n')}`);
   }
-  if (result?.response) console.log(`\n--- response ---\n${result.response.trim()}`);
-  else if (!ACTIVE.has(meta.status)) console.log(`\n(no result event recorded; raw output: ${runPath(meta.id, 'events.ndjson')})`);
+  if (meta.report) printReport(meta.report);
+  else if (result?.response) console.log(`\n--- response ---\n${result.response.trim()}`);
+  else if (!ACTIVE.has(meta.status)) console.log(`\n(no ${result ? 'response' : 'result event'} recorded; raw output: ${runPath(meta.id, 'events.ndjson')})`);
+  if (meta.blockers?.length) printBlockers(meta.blockers);
+  const resume = resumeFor(meta);
+  if (resume) console.log(`\nresume: ${resume} "<message>"`);
+}
+
+function printReport(report) {
+  const lines = [`\n--- report: ${report.status} ---`];
+  if (report.summary) lines.push(report.summary);
+  if (report.details) lines.push('', report.details, '');
+  const section = (title, items) => {
+    if (items.length) lines.push(`${title}:`, ...items.map((item) => `  - ${item}`));
+  };
+  section('changes', report.changes.map((c) => (c.change ? `${c.path}: ${c.change}` : c.path)));
+  section('verification', report.verification.map((v) => `[${v.passed ? 'passed' : 'FAILED'}] ${v.command}${v.output ? ` — ${oneLine(v.output, 160)}` : ''}`));
+  section('assumptions', report.assumptions);
+  section('remaining', report.remaining);
+  console.log(lines.join('\n'));
+}
+
+function printBlockers(blockers) {
+  console.log('\n--- blockers ---');
+  blockers.forEach((b, i) => {
+    console.log(`${i + 1}. ${b.kind} (from ${b.source}): ${b.detail}`);
+    if (b.target) console.log(`   target: ${b.target}`);
+    if (b.needs) console.log(`   needs:  ${b.needs}`);
+    (b.next ?? []).forEach((step, n) => console.log(`   ${n ? '       ' : 'next:  '} ${step}`));
+  });
 }
 
 function readEvents(id) {
@@ -192,7 +229,7 @@ async function cmdRun(argv) {
 
   const onEvent = o.verbose ? (e) => console.error(`· ${summarizeEvent(e)}`) : undefined;
   const final = await supervise(meta.id, { onEvent });
-  if (o.json) console.log(JSON.stringify({ ...final, response: readResult(meta.id)?.response ?? null }, null, 2));
+  if (o.json) console.log(JSON.stringify(withOutcome(final), null, 2));
   else printRun(final);
   process.exitCode = exitCodeFor(final.status);
 }
@@ -220,7 +257,8 @@ function cmdShow(argv) {
   const { values: o, positionals } = args(argv, { events: { type: 'string' } });
   const meta = withEffectiveStatus(readMeta(requireRun(positionals[0])));
   if (o.json) {
-    return console.log(JSON.stringify({ ...meta, result: readResult(meta.id), events: readEvents(meta.id).slice(-Number(o.events ?? 50)) }, null, 2));
+    const events = readEvents(meta.id).slice(-Number(o.events ?? 50));
+    return console.log(JSON.stringify({ ...meta, resumeCommand: resumeFor(meta), result: readResult(meta.id), events }, null, 2));
   }
   printRun(meta, { events: Number(o.events ?? 15) });
 }
@@ -234,7 +272,7 @@ async function cmdWait(argv) {
     await new Promise((r) => setTimeout(r, 2000));
     meta = withEffectiveStatus(readMeta(id));
   }
-  if (o.json) console.log(JSON.stringify({ ...meta, response: readResult(id)?.response ?? null }, null, 2));
+  if (o.json) console.log(JSON.stringify(withOutcome(meta), null, 2));
   else printRun(meta, { events: ACTIVE.has(meta.status) ? Number(o.events ?? 10) : 0 });
   if (ACTIVE.has(meta.status)) {
     if (!o.json) console.log(`\nstill ${meta.status}; wait again with: claude-agy wait ${id}`);

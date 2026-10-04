@@ -37,24 +37,33 @@ claude-agy wait <run-id> --timeout 540
 ```
 
 - **Exit code 124:** the agent is still running, so call `wait` again.
-- **Exit code 0:** succeeded. 1 means failed, 130 means cancelled.
+- **Exit code 0:** succeeded. 3 means blocked, 1 means failed, 130 means cancelled.
 - **`--plan`:** add it when the user asked for a proposal rather than edits.
 - **`--yolo`:** add it only if the user explicitly asked for permission prompts to be skipped.
-- **Follow-ups:** use `claude-agy run --resume <conversation-id> ...` to send corrections into the same Antigravity conversation instead of starting over.
+- **Follow-ups:** continue the same Antigravity conversation with the run's `resumeCommand` instead of starting over.
 
-## 4. Verify
+## 4. Handle the outcome
 
-- Run `git status --short` and `git diff --stat` in the workspace. Read the diffs of the files that matter.
-- Run the acceptance commands yourself if they are cheap.
-- If the work falls short, send at most two focused follow-ups with `--resume`. After that, report what is left rather than looping.
+When the run ends, `wait` prints its status, the agent's report, the blockers that stopped it (each with a kind, detail, target, what it needs and suggested next steps) and the command that resumes it. `claude-agy show <run-id> --json` gives the same as the fields `status`, `report`, `blockers` and `resumeCommand`.
 
-## 5. Report
+- **Blocked or failed:** handle each blocker as the `delegate-to-antigravity` skill describes, then resume with the `resumeCommand` and a message on stdin. Run a denied command yourself only if it is safe and within the task, and pass its output back.
+- **Blockers only the user can resolve:** you cannot ask the user, so stop. This covers granting permissions (`--yolo`, allow-rules), widening the scope, credentials and installs. Report the blocker and the exact `resumeCommand` to use once they decide.
+- **Limit:** send at most two follow-ups in all. After that, report what is left rather than looping.
+
+## 5. Verify
+
+- Run `git status --short` and `git diff --stat` in the workspace. Read the diffs of the files that matter, and compare them with the report's `changes`.
+- Run the acceptance commands yourself if they are cheap, and compare with the report's `verification`.
+- If the work falls short, use the remaining follow-ups for focused corrections.
+
+## 6. Report
 
 Reply with:
 - the run id and its status
 - the model and the tokens used
 - the files changed
 - the verification results
+- any blockers: what you did about each, and what still needs the user's decision, with the `resumeCommand`
 - your assessment: whether it meets the acceptance criteria, and any risks or leftovers
 
 Keep it short. Do not paste whole diffs.

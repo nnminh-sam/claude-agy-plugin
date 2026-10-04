@@ -1,6 +1,6 @@
 {
   "name": "claude-agy-plugin",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Claude Code plugin for delegating tasks to Antigravity agents",
   "type": "module",

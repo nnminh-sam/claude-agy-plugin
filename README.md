@@ -45,7 +45,8 @@ claude-agy wait <run> [--timeout SEC]  Block until done. Exit 0 ok, 1 failed, 13
 claude-agy stop <run>                  Cancel
 claude-agy quota [--credits]           Quota per model group (read-only, spends nothing)
 claude-agy usage [--since 7d]          Token usage per model
-claude-agy models                      Models available to agy
+claude-agy models                      Models available to agy (* marks the default)
+claude-agy model [ID | --pick]         Show or set the default model in ~/.claude-agy/profile.json
 ```
 
 `<run>` can be a full id, a unique prefix or suffix, or `last`. Every command accepts `--json`.
@@ -54,7 +55,7 @@ Main options for `run`:
 
 | Option | Effect |
 | --- | --- |
-| `-m/--model` | Model ID; `claude-agy models` lists them. Defaults to `$CLAUDE_AGY_MODEL` |
+| `-m/--model` | Model ID; `claude-agy models` lists them. Defaults to `$CLAUDE_AGY_MODEL`, then `defaultModel` in `profile.json` |
 | `--plan` | Plan mode: the agent proposes changes instead of editing |
 | `--effort` | Reasoning effort |
 | `--cwd` | Workspace for the agent |
@@ -92,13 +93,22 @@ This contract is shared with the orchestrator server:
 
 ```
 $CLAUDE_AGY_HOME (default ~/.claude-agy)/runs/<id>/
-  meta.json      id, status (starting|running|succeeded|failed|cancelled), prompt, label, cwd, model, mode, effort,
+  meta.json      id, status (starting|running|succeeded|failed|cancelled), prompt, label, cwd, model,
+                 modelSource (flag|env|profile), mode, effort, deniedActions,
                  source (claude-code|cli|dashboard), pid (supervisor), agyPid, conversationId, createdAt, startedAt,
                  endedAt, durationSeconds, numTurns, usage{input,output,thinking,cache_read,total}_tokens, error
   events.ndjson  raw agy stream-json lines
   stderr.log     agy stderr
-  result.json    the terminal `result` event (holds the full `response`)
+  result.json    the terminal `result` event, flattened (holds the full `response`)
+$CLAUDE_AGY_HOME/profile.json
+                 {"defaultModel": "<model id>"}; other keys are kept
 ```
+
+### Model selection
+
+Every run passes an explicit `--model` to agy, so agy never picks a model on its own. The model comes from `--model`, then `$CLAUDE_AGY_MODEL`, then `defaultModel` in `profile.json`. If the profile has no default model, claude-agy writes `gemini-3.1-pro-high` into it and says so on stderr. Change it with `claude-agy model <id>` (checked against `agy models`) or `claude-agy model --pick`, or edit the file.
+
+A run is marked `failed` when agy reports SUCCESS but stopped at an action headless mode could not approve, with no response. `deniedActions` lists those actions.
 
 `meta.json` is always replaced atomically (write to a temp file, then rename). Readers derive `lost` themselves, from a `running` status whose `pid` is dead.
 
@@ -108,7 +118,7 @@ $CLAUDE_AGY_HOME (default ~/.claude-agy)/runs/<id>/
 | --- | --- | --- |
 | `AGY_BIN` | `agy` | Path to the Antigravity CLI |
 | `CLAUDE_AGY_HOME` | `~/.claude-agy` | Where runs are stored |
-| `CLAUDE_AGY_MODEL` | (agy default) | Default model |
+| `CLAUDE_AGY_MODEL` | unset | Overrides `defaultModel` in `profile.json` |
 | `CLAUDE_AGY_SKIP_PERMISSIONS` | unset | `1` means always pass `--dangerously-skip-permissions` |
 
 ## Development

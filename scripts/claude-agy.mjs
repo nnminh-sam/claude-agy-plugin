@@ -4,8 +4,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import readline from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { formatTokens, getCredits, getModels, getQuota, summarizeEvent } from './lib/agy.mjs';
+import { PROFILE_PATH, resolveModel, writeProfile } from './lib/profile.mjs';
 import { supervise } from './lib/runner.mjs';
 import {
   ACTIVE, HOME, createRun, isAlive, listRuns, newRunId, readMeta, readResult, resolveRunId, runPath, updateMeta,
@@ -24,12 +26,13 @@ Usage:
   claude-agy stop <run>                  Cancel a running agent
   claude-agy quota [--credits]           Antigravity quota per model group
   claude-agy usage [--since 7d]          Token usage of delegated runs, per model
-  claude-agy models                      Models available to agy
+  claude-agy models                      Models available to agy (* marks the default)
+  claude-agy model [ID | --pick]         Show or set the default model (saved in profile.json)
 
 <run> is a run id, a unique prefix/suffix of one, or "last". Add --json for machine output.
 
 run options:
-  -m, --model ID        agy model (default $CLAUDE_AGY_MODEL or agy's default); see "claude-agy models"
+  -m, --model ID        agy model (default: $CLAUDE_AGY_MODEL, then "defaultModel" in profile.json)
       --plan            Plan mode: the agent proposes changes instead of editing (default: accept-edits)
       --effort LEVEL    low | medium | high | xhigh | max
       --cwd DIR         Workspace for the agent (default: current directory)
@@ -44,7 +47,7 @@ run options:
       --no-preamble     Send the task verbatim (no headless-delegation preamble)
   -v, --verbose         Stream event summaries to stderr while running
 
-State: ${HOME}`;
+State: ${HOME}   Profile: ${PROFILE_PATH}`;
 
 function fail(message, code = 1) {
   console.error(`claude-agy: ${message}`);
@@ -90,7 +93,7 @@ function printRun(meta, { events = 0 } = {}) {
   if (meta.durationSeconds != null) bits.push(`${meta.durationSeconds}s`);
   if (meta.numTurns != null) bits.push(`${meta.numTurns} turns`);
   if (meta.usage) bits.push(`${formatTokens(meta.usage.total_tokens)} tokens`);
-  bits.push(`model ${meta.model ?? 'default'}`);
+  bits.push(`model ${meta.model ?? 'agy default'}`);
   console.log(`run ${meta.id}: ${bits.join(' · ')}`);
   if (meta.label) console.log(`label: ${meta.label}`);
   console.log(`cwd: ${meta.cwd}`);
@@ -144,6 +147,14 @@ async function cmdRun(argv) {
   if (prompt === '-') prompt = fs.readFileSync(0, 'utf8').trim();
   if (!prompt) fail('missing task. Usage: claude-agy run [options] <task...>', 2);
 
+  let selected;
+  try {
+    selected = resolveModel(o.model);
+  } catch (err) {
+    fail(err.message);
+  }
+  if (selected.created) console.error(`claude-agy: no default model configured; saved "${selected.model}" to ${PROFILE_PATH}`);
+
   const meta = createRun({
     id: newRunId(),
     status: 'starting',
@@ -152,7 +163,8 @@ async function cmdRun(argv) {
     label: o.label ?? null,
     prompt,
     cwd: path.resolve(o.cwd ?? process.cwd()),
-    model: o.model ?? process.env.CLAUDE_AGY_MODEL ?? null,
+    model: selected.model,
+    modelSource: selected.source,
     mode: o.plan ? 'plan' : 'accept-edits',
     effort: o.effort ?? null,
     agent: o.agent ?? null,
@@ -303,16 +315,63 @@ function cmdUsage(argv) {
   for (const row of [head, ...rows]) console.log(row.map((c, i) => (i === 0 ? c.padEnd(widths[i]) : c.padStart(widths[i]))).join('  '));
 }
 
+function listModels() {
+  try {
+    return getModels();
+  } catch (err) {
+    fail(`could not list models from agy: ${err.stderr || err.message}`);
+  }
+}
+
+function currentModel() {
+  try {
+    return resolveModel();
+  } catch (err) {
+    fail(err.message);
+  }
+}
+
 function cmdModels(argv) {
   const { values: o } = args(argv, {}, { positionals: false });
-  const models = getModels();
-  if (o.json) return console.log(JSON.stringify(models, null, 2));
-  for (const m of models) console.log(`${m.id}\t${m.name}`);
+  const models = listModels();
+  const { model: current } = currentModel();
+  if (o.json) return console.log(JSON.stringify(models.map((m) => ({ ...m, default: m.id === current })), null, 2));
+  for (const m of models) console.log(`${m.id === current ? '*' : ' '} ${m.id}\t${m.name}`);
+}
+
+async function pickModel(models, current) {
+  models.forEach((m, i) => console.log(`${String(i + 1).padStart(3)}. ${m.id}${m.id === current ? ' (current)' : ''}  ${m.name}`));
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = (await rl.question('Default model (number or ID): ')).trim();
+  rl.close();
+  return /^\d+$/.test(answer) ? models[Number(answer) - 1]?.id ?? answer : answer;
+}
+
+const SOURCES = { flag: '--model', env: '$CLAUDE_AGY_MODEL, which overrides the profile', profile: PROFILE_PATH };
+
+async function cmdModel(argv) {
+  const { values: o, positionals } = args(argv, { pick: { type: 'boolean' } });
+  const current = currentModel();
+  if (!positionals[0] && !o.pick) {
+    if (o.json) return console.log(JSON.stringify({ ...current, profile: PROFILE_PATH }));
+    return console.log(`default model: ${current.model} (from ${SOURCES[current.source]})`);
+  }
+  const models = listModels();
+  let wanted = positionals[0];
+  if (o.pick) {
+    if (!process.stdin.isTTY) fail('--pick needs an interactive terminal; pass a model ID instead', 2);
+    wanted = await pickModel(models, current.model);
+  }
+  if (!models.some((m) => m.id === wanted)) fail(`unknown model "${wanted}"; "claude-agy models" lists the IDs`);
+  writeProfile({ defaultModel: wanted });
+  if (o.json) return console.log(JSON.stringify({ model: wanted, source: 'profile', profile: PROFILE_PATH }));
+  console.log(`default model set to ${wanted} in ${PROFILE_PATH}`);
+  if (process.env.CLAUDE_AGY_MODEL) console.log(`note: $CLAUDE_AGY_MODEL (${process.env.CLAUDE_AGY_MODEL}) still overrides it`);
 }
 
 const COMMANDS = {
   run: cmdRun, list: cmdList, ls: cmdList, show: cmdShow, wait: cmdWait, stop: cmdStop,
-  quota: cmdQuota, usage: cmdUsage, models: cmdModels,
+  quota: cmdQuota, usage: cmdUsage, models: cmdModels, model: cmdModel,
   // Internal: entry point of a detached background run.
   _supervise: async ([id]) => {
     const final = await supervise(id);

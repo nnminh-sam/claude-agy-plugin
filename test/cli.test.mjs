@@ -16,7 +16,7 @@ function setup() {
   const cli = (args, env = {}) => new Promise((resolve) => {
     execFile(process.execPath, [CLI, ...args], {
       cwd: home,
-      env: { ...process.env, CLAUDE_AGY_HOME: home, AGY_BIN: FAKE, FAKE_AGY_ARGS_FILE: argsFile, CLAUDECODE: '', ...env },
+      env: { ...process.env, CLAUDE_AGY_HOME: home, AGY_BIN: FAKE, FAKE_AGY_ARGS_FILE: argsFile, CLAUDECODE: '', CLAUDE_AGY_MODEL: '', ...env },
     }, (err, stdout, stderr) => resolve({ code: err?.code ?? 0, stdout, stderr }));
   });
   const agyArgs = () => JSON.parse(fs.readFileSync(argsFile, 'utf8'));
@@ -41,7 +41,7 @@ test('foreground run records events, result and token usage', async () => {
   const args = agyArgs();
   assert.equal(args[0], '--print');
   assert.match(args[1], /Delegated by Claude Code[\s\S]*write a\.txt$/);
-  assert.deepEqual(args.slice(2, 6), ['--output-format', 'stream-json', '--mode', 'accept-edits']);
+  assert.deepEqual(args.slice(2, 8), ['--output-format', 'stream-json', '--model', 'gemini-3.1-pro-high', '--mode', 'accept-edits']);
   assert.ok(!args.includes('--dangerously-skip-permissions'));
 });
 
@@ -96,7 +96,7 @@ test('background run can be waited on, listed and summarized', async () => {
   const list = JSON.parse((await cli(['list', '--json'])).stdout);
   assert.deepEqual(list.map((r) => r.id), [id]);
   const usage = JSON.parse((await cli(['usage', '--json'])).stdout);
-  assert.equal(usage.default.total_tokens, 125);
+  assert.equal(usage['gemini-3.1-pro-high'].total_tokens, 125);
   const shown = await cli(['show', 'last']);
   assert.match(shown.stdout, /--- response ---\nDone\. Changed a\.txt\./);
 });
@@ -116,4 +116,68 @@ test('quota parses the /usage payload', async () => {
   const { code, stdout } = await cli(['quota']);
   assert.equal(code, 0);
   assert.match(stdout, /Gemini Models\n {2}Five Hour Limit Remaining +50% left/);
+});
+
+test('without a profile, the built-in default model is saved and passed to agy', async () => {
+  const { home, cli, agyArgs } = setup();
+  const { stdout, stderr } = await cli(['run', '--json', 'task']);
+  const run = JSON.parse(stdout);
+  assert.equal(run.model, 'gemini-3.1-pro-high');
+  assert.equal(run.modelSource, 'profile');
+  assert.match(stderr, /no default model configured/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, 'profile.json'), 'utf8')), { defaultModel: 'gemini-3.1-pro-high' });
+  assert.equal(agyArgs()[agyArgs().indexOf('--model') + 1], 'gemini-3.1-pro-high');
+});
+
+test('model precedence: --model, then $CLAUDE_AGY_MODEL, then profile.json', async () => {
+  const { home, cli, agyArgs } = setup();
+  fs.writeFileSync(path.join(home, 'profile.json'), JSON.stringify({ defaultModel: 'gemini-pro', other: 1 }));
+  const modelArg = () => agyArgs()[agyArgs().indexOf('--model') + 1];
+  assert.equal(JSON.parse((await cli(['run', '--json', 'task'])).stdout).modelSource, 'profile');
+  assert.equal(modelArg(), 'gemini-pro');
+  assert.equal(JSON.parse((await cli(['run', '--json', 'task'], { CLAUDE_AGY_MODEL: 'gemini-env' })).stdout).modelSource, 'env');
+  assert.equal(modelArg(), 'gemini-env');
+  await cli(['run', '-m', 'gemini-flag', 'task'], { CLAUDE_AGY_MODEL: 'gemini-env' });
+  assert.equal(modelArg(), 'gemini-flag');
+});
+
+test('a malformed profile stops the run before agy starts', async () => {
+  const { home, cli } = setup();
+  fs.writeFileSync(path.join(home, 'profile.json'), JSON.stringify({ defaultModel: 42 }));
+  const { code, stderr } = await cli(['run', 'task']);
+  assert.equal(code, 1);
+  assert.match(stderr, /"defaultModel" .* must be a non-empty string/);
+  assert.ok(!fs.existsSync(path.join(home, 'runs')));
+});
+
+test('model command shows, validates and saves the default model', async () => {
+  const { home, cli } = setup();
+  const set = await cli(['model', 'gemini-fast']);
+  assert.equal(set.code, 0);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(home, 'profile.json'), 'utf8')).defaultModel, 'gemini-fast');
+  assert.match((await cli(['model'])).stdout, /default model: gemini-fast \(from .*profile\.json\)/);
+  assert.match((await cli(['models'])).stdout, /^\* gemini-fast\tGemini Fast\n {2}gemini-pro\tGemini Pro$/m);
+  const unknown = await cli(['model', 'nope']);
+  assert.equal(unknown.code, 1);
+  assert.match(unknown.stderr, /unknown model "nope"/);
+});
+
+test('a nested result event is read for status, usage and response', async () => {
+  const { home, cli } = setup();
+  const run = JSON.parse((await cli(['run', '--json', 'task'], { FAKE_AGY_MODE: 'nested' })).stdout);
+  assert.equal(run.status, 'succeeded');
+  assert.equal(run.usage.total_tokens, 12);
+  assert.equal(run.numTurns, 3);
+  assert.equal(run.response, 'Nested done.');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(home, 'runs', run.id, 'result.json'), 'utf8')).status, 'SUCCESS');
+});
+
+test('a turn stopped by denied permissions with no response is a failure', async () => {
+  const { cli } = setup();
+  const { code, stdout } = await cli(['run', '--json', 'task'], { FAKE_AGY_MODE: 'denied' });
+  assert.equal(code, 1);
+  const run = JSON.parse(stdout);
+  assert.equal(run.status, 'failed');
+  assert.deepEqual(run.deniedActions, [{ action: 'command', display_name: 'RunCommand' }]);
+  assert.match(run.error, /permission/);
 });

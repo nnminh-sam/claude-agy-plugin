@@ -16,6 +16,11 @@ if (process.argv[2] === '-p' && process.argv[3] === '/usage') {
   process.exit(0);
 }
 
+if (process.argv[2] === 'models') {
+  process.stdout.write('Fetching models...\ngemini-fast\tGemini Fast\ngemini-pro\tGemini Pro\n');
+  process.exit(0);
+}
+
 emit({ event: 'init', conversation_id: 'conv-123', model: 'fake-model' });
 emit({ event: 'step_update', step_type: 'TOOL_CALL', tool_info: { name: 'write_file', parameters: { path: 'a.txt' } } });
 
@@ -25,6 +30,18 @@ if (mode === 'slow') {
   process.stderr.write('some log line\nAGY_ERROR: {"status":"UNAVAILABLE","retryable":true,"message":"model overloaded"}\n');
   emit({ event: 'result', conversation_id: 'conv-123', status: 'ERROR', response: 'partial', usage: { total_tokens: 5 } });
   process.exit(3);
+} else if (mode === 'nested') {
+  // Real agy nests the outcome under `result`.
+  emit({ event: 'result', result: {
+    conversation_id: 'conv-123', status: 'SUCCESS', response: 'Nested done.', duration_seconds: 7, num_turns: 3,
+    usage: { input_tokens: 10, output_tokens: 2, thinking_tokens: 1, cache_read_tokens: 0, total_tokens: 12 },
+  } });
+} else if (mode === 'denied') {
+  process.stderr.write('jetski: no output produced — a tool required the "command" permission\n');
+  emit({ event: 'result', result: {
+    conversation_id: 'conv-123', status: 'SUCCESS', response: '', num_turns: 1, usage: { total_tokens: 9 },
+    denied_actions: [{ action: 'command', display_name: 'RunCommand' }],
+  } });
 } else {
   emit({
     event: 'result', conversation_id: 'conv-123', status: 'SUCCESS', response: 'Done. Changed a.txt.',

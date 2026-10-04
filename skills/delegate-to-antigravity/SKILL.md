@@ -21,7 +21,7 @@ Keep it in Claude Code instead when:
 
 ## Models and quota
 
-`claude-agy models` lists the IDs. Quota is shared within each group and has a 5-hour window and a weekly window:
+`claude-agy models` lists the IDs and marks the default. Runs without `--model` use `$CLAUDE_AGY_MODEL`, then `defaultModel` in `~/.claude-agy/profile.json`; `claude-agy model <id>` changes it. Quota is shared within each group and has a 5-hour window and a weekly window:
 
 | Group | Models | Use for |
 | --- | --- | --- |

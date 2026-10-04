@@ -6,6 +6,9 @@ import { readMeta, runPath, updateMeta, writeJsonAtomic } from './store.mjs';
 
 const clip = (s, n) => (s == null ? null : s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const endStream = (stream) => new Promise((resolve) => stream.end(resolve));
+// agy nests the outcome under `result` ({event: "result", result: {status, response, usage, ...}});
+// result.json stores it flattened, as {event: "result", status, response, usage, ...}.
+const flattenResult = (event) => (event.result && typeof event.result === 'object' ? { event: 'result', ...event.result } : event);
 
 // Runs `agy` for an existing run (created by createRun) and records the outcome in meta.json.
 // Resolves with the final meta. SIGINT/SIGTERM/SIGHUP cancel the agent and mark the run cancelled.
@@ -52,8 +55,8 @@ export async function supervise(id, { onEvent } = {}) {
       return;
     }
     if (eventKind(event) === 'result') {
-      result = event;
-      writeJsonAtomic(runPath(id, 'result.json'), event);
+      result = flattenResult(event);
+      writeJsonAtomic(runPath(id, 'result.json'), result);
     }
     if (event.conversation_id && event.conversation_id !== conversationId) {
       conversationId = event.conversation_id;
@@ -73,6 +76,8 @@ export async function supervise(id, { onEvent } = {}) {
   if (cancelled) status = 'cancelled';
   else if (spawnError || code !== 0) status = 'failed';
   else if (result?.status && !/SUCCESS/i.test(result.status)) status = 'failed';
+  // agy reports SUCCESS when a headless turn stops at a permission it cannot ask for, with no response.
+  else if (result?.denied_actions?.length && !result.response?.trim()) status = 'failed';
 
   let error = null;
   if (spawnError) {
@@ -80,7 +85,10 @@ export async function supervise(id, { onEvent } = {}) {
       ? `agy binary not found ("${AGY_BIN}"). Install the Antigravity CLI or set AGY_BIN.`
       : spawnError.message;
   } else if (status === 'failed') {
-    error = parseAgyError(stderrText) ?? (stderrText.trim().split('\n').slice(-5).join('\n') || `agy exited with code ${code}`);
+    const denied = result?.denied_actions?.map((a) => a.display_name ?? a.action).join(', ');
+    error = parseAgyError(stderrText)
+      ?? (stderrText.trim().split('\n').slice(-5).join('\n')
+        || (denied ? `stopped at actions headless mode cannot approve: ${denied}` : `agy exited with code ${code}`));
   }
 
   return updateMeta(id, {
@@ -93,6 +101,7 @@ export async function supervise(id, { onEvent } = {}) {
     usage: result?.usage ?? null,
     conversationId: result?.conversation_id || conversationId,
     responsePreview: clip(result?.response, 300),
+    deniedActions: result?.denied_actions ?? [],
     error,
   });
 }

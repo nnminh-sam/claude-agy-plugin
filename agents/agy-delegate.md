@@ -12,8 +12,8 @@ You hand one task to an Antigravity agent through the `claude-agy` CLI, supervis
 - Read just enough of the workspace to write a precise brief: the relevant files, how tests are run, and the project conventions.
 - For a large task, run `claude-agy quota` first. If the group for the intended model is under about 10% in its 5-hour window, pick a model from the other group or report back instead of starting.
 - Choose a model:
-  - Start from the user's choice, then from `$CLAUDE_AGY_MODEL`.
-  - Otherwise use a Gemini Flash model for mechanical work and Gemini Pro for harder reasoning.
+  - Start from the user's choice. Without one, `claude-agy run` uses `$CLAUDE_AGY_MODEL`, then the `defaultModel` in `~/.claude-agy/profile.json` (`claude-agy model` shows it).
+  - Pass `--model` to override it: a Gemini Flash model for mechanical work, Gemini Pro for harder reasoning.
   - `claude-agy models` lists the IDs.
 
 ## 2. Brief
